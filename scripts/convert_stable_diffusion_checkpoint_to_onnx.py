@@ -13,12 +13,15 @@
 # limitations under the License.
 
 import argparse
+import os
+import shutil
 from pathlib import Path
 
 import torch
 from torch.onnx import export
 
-from diffusers import StableDiffusionOnnxPipeline, StableDiffusionPipeline
+import onnx
+from diffusers import OnnxStableDiffusionPipeline, StableDiffusionPipeline
 from diffusers.onnx_utils import OnnxRuntimeModel
 from packaging import version
 
@@ -67,7 +70,7 @@ def onnx_export(
 
 @torch.no_grad()
 def convert_models(model_path: str, output_path: str, opset: int):
-    pipeline = StableDiffusionPipeline.from_pretrained(model_path, use_auth_token=True)
+    pipeline = StableDiffusionPipeline.from_pretrained(model_path)
     output_path = Path(output_path)
 
     # TEXT ENCODER
@@ -90,12 +93,19 @@ def convert_models(model_path: str, output_path: str, opset: int):
         },
         opset=opset,
     )
+    del pipeline.text_encoder
 
     # UNET
+    unet_path = output_path / "unet" / "model.onnx"
     onnx_export(
         pipeline.unet,
-        model_args=(torch.randn(2, 4, 64, 64), torch.LongTensor([0, 1]), torch.randn(2, 77, 768), False),
-        output_path=output_path / "unet" / "model.onnx",
+        model_args=(
+            torch.randn(2, pipeline.unet.in_channels, 64, 64),
+            torch.LongTensor([0, 1]),
+            torch.randn(2, 77, 768),
+            False,
+        ),
+        output_path=unet_path,
         ordered_input_names=["sample", "timestep", "encoder_hidden_states", "return_dict"],
         output_names=["out_sample"],  # has to be different from "sample" for correct tracing
         dynamic_axes={
@@ -106,6 +116,22 @@ def convert_models(model_path: str, output_path: str, opset: int):
         opset=opset,
         use_external_data_format=True,  # UNet is > 2GB, so the weights need to be split
     )
+    unet_model_path = str(unet_path.absolute().as_posix())
+    unet_dir = os.path.dirname(unet_model_path)
+    unet = onnx.load(unet_model_path)
+    # clean up existing tensor files
+    shutil.rmtree(unet_dir)
+    os.mkdir(unet_dir)
+    # collate external tensor files into one
+    onnx.save_model(
+        unet,
+        unet_model_path,
+        save_as_external_data=True,
+        all_tensors_to_one_file=True,
+        location="weights.pb",
+        convert_attribute=False,
+    )
+    del pipeline.unet
 
     # VAE ENCODER
     vae_encoder = pipeline.vae
@@ -138,6 +164,7 @@ def convert_models(model_path: str, output_path: str, opset: int):
         },
         opset=opset,
     )
+    del pipeline.vae
 
     # SAFETY CHECKER
     safety_checker = pipeline.safety_checker
@@ -154,8 +181,10 @@ def convert_models(model_path: str, output_path: str, opset: int):
         },
         opset=opset,
     )
+    del pipeline.safety_checker
 
-    onnx_pipeline = StableDiffusionOnnxPipeline(
+    onnx_pipeline = OnnxStableDiffusionPipeline(
+        vae_encoder=OnnxRuntimeModel.from_pretrained(output_path / "vae_encoder"),
         vae_decoder=OnnxRuntimeModel.from_pretrained(output_path / "vae_decoder"),
         text_encoder=OnnxRuntimeModel.from_pretrained(output_path / "text_encoder"),
         tokenizer=pipeline.tokenizer,
@@ -168,7 +197,9 @@ def convert_models(model_path: str, output_path: str, opset: int):
     onnx_pipeline.save_pretrained(output_path)
     print("ONNX pipeline saved to", output_path)
 
-    _ = StableDiffusionOnnxPipeline.from_pretrained(output_path, provider="CPUExecutionProvider")
+    del pipeline
+    del onnx_pipeline
+    _ = OnnxStableDiffusionPipeline.from_pretrained(output_path, provider="CPUExecutionProvider")
     print("ONNX pipeline is loadable")
 
 
@@ -187,7 +218,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--opset",
         default=14,
-        type=str,
+        type=int,
         help="The version of the ONNX operator set to use.",
     )
 

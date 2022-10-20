@@ -9,7 +9,7 @@ from .utils import (
 )
 
 
-__version__ = "0.4.0.dev0"
+__version__ = "0.6.0"
 
 from .configuration_utils import ConfigMixin
 from .onnx_utils import OnnxRuntimeModel
@@ -52,26 +52,40 @@ if is_torch_available() and is_transformers_available():
         LDMTextToImagePipeline,
         StableDiffusionImg2ImgPipeline,
         StableDiffusionInpaintPipeline,
+        StableDiffusionInpaintPipelineLegacy,
         StableDiffusionPipeline,
     )
 else:
     from .utils.dummy_torch_and_transformers_objects import *  # noqa F403
 
 if is_torch_available() and is_transformers_available() and is_onnx_available():
-    from .pipelines import StableDiffusionOnnxPipeline
+    from .pipelines import (
+        OnnxStableDiffusionImg2ImgPipeline,
+        OnnxStableDiffusionInpaintPipeline,
+        OnnxStableDiffusionPipeline,
+        StableDiffusionOnnxPipeline,
+    )
 else:
     from .utils.dummy_torch_and_transformers_and_onnx_objects import *  # noqa F403
 
 if is_flax_available():
     from .modeling_flax_utils import FlaxModelMixin
     from .models.unet_2d_condition_flax import FlaxUNet2DConditionModel
+    from .models.vae_flax import FlaxAutoencoderKL
+    from .pipeline_flax_utils import FlaxDiffusionPipeline
     from .schedulers import (
         FlaxDDIMScheduler,
         FlaxDDPMScheduler,
         FlaxKarrasVeScheduler,
         FlaxLMSDiscreteScheduler,
         FlaxPNDMScheduler,
+        FlaxSchedulerMixin,
         FlaxScoreSdeVeScheduler,
     )
 else:
     from .utils.dummy_flax_objects import *  # noqa F403
+
+if is_flax_available() and is_transformers_available():
+    from .pipelines import FlaxStableDiffusionPipeline
+else:
+    from .utils.dummy_flax_and_transformers_objects import *  # noqa F403
